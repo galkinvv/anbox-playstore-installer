@@ -105,6 +105,8 @@ OPENGAPPS_URL="https://sourceforge.net/projects/opengapps/files/x86_64/$OPENGAPP
 HOUDINI_Y_URL="http://dl.android-x86.org/houdini/7_y/houdini.sfs"
 HOUDINI_Z_URL="http://dl.android-x86.org/houdini/7_z/houdini.sfs"
 
+if [ "$OVERLAYDIR" != "" ]; then CREATE_OVERLAY_ONLY=true; fi
+if [ "$CREATE_OVERLAY_ONLY" != "true" ]; then 
 ANBOX=$(which anbox)
 SNAP_TOP=""
 if ( [ -d '/var/snap' ] || [ -d '/snap' ] ) && \
@@ -140,6 +142,7 @@ EOF
 
   sleep 20
 fi
+fi #CREATE_OVERLAY_ONLY
 
 echo $OVERLAYDIR
 if [ ! -d "$OVERLAYDIR" ]; then
@@ -154,7 +157,8 @@ fi
 
 cd "$WORKDIR"
 
-if [ -d "$WORKDIR/squashfs-root" ]; then
+if [ "$CREATE_OVERLAY_ONLY" != "true" ]; then 
+if [ -d "$EXTRACTED_SQUASH_ROOT" ]; then
   $SUDO rm -rf squashfs-root
 fi
 echo "Extracting anbox android image"
@@ -165,15 +169,19 @@ else
 	cp /var/lib/anbox/android.img .
 fi
 $SUDO $UNSQUASHFS android.img
+EXTRACTED_SQUASH_ROOT=$EXTRACTED_SQUASH_ROOT
+else #CREATE_OVERLAY_ONLY
+EXTRACTED_SQUASH_ROOT=/var/lib/anbox/rootfs
+fi #CREATE_OVERLAY_ONLY
 
 # get opengapps and install it
 cd "$WORKDIR"
 echo "Loading open gapps from $OPENGAPPS_URL"
 while : ;do
  if [ ! -f ./$OPENGAPPS_FILE ]; then
-	 $WGET -q --show-progress $OPENGAPPS_URL
+	 $WGET --show-progress $OPENGAPPS_URL
  else
-	 $WGET -q --show-progress -c $OPENGAPPS_URL
+	 $WGET --show-progress -c $OPENGAPPS_URL
  fi
  [ $? = 0 ] && break
 done
@@ -239,6 +247,7 @@ $SUDO cp -r ./houdini_z/* "$LIBDIR64/arm64"
 $SUDO chown -R 100000:100000 "$LIBDIR64/arm64"
 $SUDO mv "$LIBDIR64/arm64/libhoudini.so" "$LIBDIR64/libhoudini.so"
 
+if [ "$CREATE_OVERLAY_ONLY" != "true" ]; then 
 # add houdini parser
 BINFMT_DIR="/proc/sys/fs/binfmt_misc/register"
 set +e
@@ -248,6 +257,7 @@ echo ':arm64_exe:M::\x7f\x45\x4c\x46\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00
 echo ':arm64_dyn:M::\x7f\x45\x4c\x46\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\xb7::/system/lib64/arm64/houdini64:P' | $SUDO tee -a "$BINFMT_DIR"
 
 set -e
+fi #CREATE_OVERLAY_ONLY
 
 echo "Modify anbox features"
 # add features
@@ -271,9 +281,10 @@ END
 C=$(echo $C | sed 's/\//\\\//g')
 C=$(echo $C | sed 's/\"/\\\"/g')
 
+
 if [ ! -d "$OVERLAYDIR/system/etc/permissions/" ]; then
   $SUDO mkdir -p "$OVERLAYDIR/system/etc/permissions/"
-  $SUDO cp "$WORKDIR/squashfs-root/system/etc/permissions/anbox.xml" "$OVERLAYDIR/system/etc/permissions/anbox.xml"
+  $SUDO cp "$EXTRACTED_SQUASH_ROOT/system/etc/permissions/anbox.xml" "$OVERLAYDIR/system/etc/permissions/anbox.xml"
 fi
 
 $SUDO sed -i "/<\/permissions>/ s/.*/${C}\n&/" "$OVERLAYDIR/system/etc/permissions/anbox.xml"
@@ -283,11 +294,11 @@ $SUDO sed -i "/<unavailable-feature name=\"android.hardware.wifi\" \/>/d" "$OVER
 $SUDO sed -i "/<unavailable-feature name=\"android.hardware.bluetooth\" \/>/d" "$OVERLAYDIR/system/etc/permissions/anbox.xml"
 
 if [ ! -x "$OVERLAYDIR/system/build.prop" ]; then
-  $SUDO cp "$WORKDIR/squashfs-root/system/build.prop" "$OVERLAYDIR/system/build.prop"
+  $SUDO cp "$EXTRACTED_SQUASH_ROOT/system/build.prop" "$OVERLAYDIR/system/build.prop"
 fi
 
 if [ ! -x "$OVERLAYDIR/default.prop" ]; then
-  $SUDO cp "$WORKDIR/squashfs-root/default.prop" "$OVERLAYDIR/default.prop"
+  $SUDO cp "$EXTRACTED_SQUASH_ROOT/default.prop" "$OVERLAYDIR/default.prop"
 fi
 
 # set processors
@@ -301,6 +312,7 @@ $SUDO sed -i '/ro.zygote=zygote64_32/a\ro.dalvik.vm.native.bridge=libhoudini.so'
 # enable opengles
 echo "ro.opengles.version=131072" | $SUDO tee -a "$OVERLAYDIR/system/build.prop"
 
+if [ "$CREATE_OVERLAY_ONLY" != "true" ]; then 
 echo "Restart anbox"
 
 if $WITH_SNAP;then
@@ -308,3 +320,4 @@ if $WITH_SNAP;then
 else
 	$SUDO systemctl restart anbox-container-manager.service
 fi
+fi #CREATE_OVERLAY_ONLY
